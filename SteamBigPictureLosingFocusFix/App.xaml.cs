@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Linq;
 using System.Windows.Documents;
+using Microsoft.VisualBasic;
 
 namespace SteamBigPictureLosingFocusFix
 {
@@ -32,6 +33,8 @@ namespace SteamBigPictureLosingFocusFix
         protected override void OnStartup(StartupEventArgs e)
         {
             Log("Program started");
+
+            new MainWindow();
 
             TryWatchSteamProcess();
 
@@ -55,12 +58,53 @@ namespace SteamBigPictureLosingFocusFix
 
             Log("Focus watcher has been stopped.");
 
+            _processMonitor.Dispose();
+            Log("Process monitor has been stopped.");
+
             base.OnExit(e);
         }
 
         private static void Log(string text)
         {
-            Debug.WriteLine("[{0}]: {1}", DateTime.Now.ToString("HH:mm:ss"), text);
+            string message = string.Format("[{0}]: {1}", DateTime.Now.ToString("HH:mm:ss"), text);
+
+            Debug.WriteLine(message);
+
+            string path = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Steam Big Picture Losing Focus Fix", 
+                "log.txt"
+                );
+
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+
+            using (TextWriter writer = new StreamWriter(path, true))
+            {
+                writer.WriteLine(message);
+                writer.Flush();
+            }
+        }
+
+        // Original: http://www.shloemi.com/2012/09/solved-setforegroundwindow-win32-api-not-always-works/
+        // Author: Shlomi Ohayon
+        private static void ForceForegroundWindow(IntPtr hWnd)
+        {
+            uint foreThread = Win32.GetWindowThreadProcessId(Win32.GetForegroundWindow(), IntPtr.Zero);
+            uint appThread = Win32.GetCurrentThreadId();
+            const uint SW_SHOW = 5;
+
+            if (foreThread != appThread)
+            {
+                Win32.AttachThreadInput(foreThread, appThread, true);
+                Win32.BringWindowToTop(hWnd);
+                Win32.ShowWindow(hWnd, SW_SHOW);
+                Win32.AttachThreadInput(foreThread, appThread, false);
+            }
+            else
+            {
+                Win32.BringWindowToTop(hWnd);
+                Win32.ShowWindow(hWnd, SW_SHOW);
+            }
         }
 
         private void TryWatchSteamProcess()
@@ -124,6 +168,8 @@ namespace SteamBigPictureLosingFocusFix
 
         private bool TryStopFocusWatcher()
         {
+            if (_watcherTask == null) return true;
+
             _watcherStopSignal.Set();
 
             return _watcherTask.Wait(WatcherStopTimeout);
@@ -164,7 +210,9 @@ namespace SteamBigPictureLosingFocusFix
             IntPtr bigPictureWindowHandle = Win32.FindWindow(BigPictureWindowClassName, BigPictureWindowTitle);
             if (bigPictureWindowHandle == IntPtr.Zero) return;
 
-            Win32.SwitchToThisWindow(bigPictureWindowHandle, true);
+            if (bigPictureWindowHandle == Win32.GetForegroundWindow()) return;
+
+            ForceForegroundWindow(bigPictureWindowHandle);
 
             Log("Forces Big Picture window focus");
         }
@@ -219,7 +267,7 @@ namespace SteamBigPictureLosingFocusFix
             process.EnableRaisingEvents = true;
             process.Exited += ChildProcessOnExited;
 
-            Log("Process started. Id: " + processId + ", parendt id: " + parentProcessId + ", path: " + processPath);
+            Log("Process started. Id: " + processId + ", parent id: " + parentProcessId + ", path: " + processPath);
         }
 
         private void ChildProcessOnExited(object sender, EventArgs eventArgs)
